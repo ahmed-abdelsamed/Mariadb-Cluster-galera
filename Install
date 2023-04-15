@@ -1,0 +1,116 @@
+sudo sed -i 's/^SELINUX=.*/SELINUX=disabled/g' /etc/selinux/config
+ssh-copy-id
+
+vi /etc/yum.repos.d/MariaDB.repo
+
+[mariadb]
+name = MariaDB-11.0.1
+baseurl= https://archive.mariadb.org/mariadb-11.0.1/yum/centos/$releasever/$basearch
+gpgkey= https://archive.mariadb.org/PublicKey
+gpgcheck=1
+
+-----------------Install on all nodes 
+sudo dnf install mariadb-server-galera
+systemctl start mariadb 
+mysql_secure-installation
+OR
+sudo mysql -uroot
+> set password = password("your_password");
+> quit;
+
+sudo dnf  install rsync
+
+##### Configuring on all  Nodes with different IP & Hostname
+
+sudo nano /etc/my.cnf.d/galera.cnf
+---
+[mysqld]
+binlog_format=ROW
+default-storage-engine=innodb
+innodb_autoinc_lock_mode=2
+bind-address=0.0.0.0
+
+# Galera Provider Configuration
+wsrep_on=ON
+wsrep_provider=/usr/lib/galera/libgalera_smm.so
+
+# Galera Cluster Configuration
+wsrep_cluster_name="db_cluster"
+wsrep_cluster_address="gcomm://192.168.56.101,192.168.56.102,192.168.56.103"
+
+# Galera Synchronization Configuration
+wsrep_sst_method=rsync
+
+# Galera Node Configuration
+wsrep_node_address="192.168.56.101"
+wsrep_node_name="node1.coffee.me"
+---
+### Opening the Firewall on Every Server
+# if Firewalld is running, allow ports
+[root@www ~]# firewall-cmd --add-service=mysql --permanent
+[root@www ~]# firewall-cmd --add-port={3306/tcp,4567/tcp,4568/tcp,4444/tcp,4567/udp} --permanent
+[root@www ~]# firewall-cmd --reload
+
+
+##  Starting the Cluster
+Stop MariaDB on All Three Servers
+sudo systemctl stop mariadb 
+sudo systemctl status mariadb  
+############ Bring Up the First Node
+----
+To bring up the first node, you’ll need to use a special startup script. The way you’ve configured your cluster, each node that comes online tries to connect to at least one other node specified in its galera.cnf file to get its initial state. Without using the galera_new_cluster script that allows systemd to pass the --wsrep-new-cluster parameter, a normal systemctl start mysql would fail because there are no nodes running for the first node to connect with.
+----
+Node0$ sudo galera_new_cluster
+     $ systemctl enable mariadb 
+
+node0$ mysql -u root -p -e "SHOW STATUS LIKE 'wsrep_cluster_size'"
+     $ mysql -u root -p -e "show status like 'wsrep_%';"
+    
+---
+Output
++--------------------+-------+
+| Variable_name      | Value |
++--------------------+-------+
+| wsrep_cluster_size | 1     |
++--------------------+-------+
+---
+##### Bring Up the Second Node
+node2$ sudo systemctl start mysql
+node2$ mysql -u root -p -e "SHOW STATUS LIKE 'wsrep_cluster_size'"
+---
+Output
++--------------------+-------+
+| Variable_name      | Value |
++--------------------+-------+
+| wsrep_cluster_size | 2     |
++--------------------+-------+
+---
+############ Bring Up the Third Node
+node3$ sudo systemctl start mysql
+node3$ mysql -u root -p -e "SHOW STATUS LIKE 'wsrep_cluster_size'"
+
+Output
++--------------------+-------+
+| Variable_name      | Value |
++--------------------+-------+
+| wsrep_cluster_size | 3     |
++--------------------+-------+
+
+##Testing Replication
+Write to the First Node
+node0$ mysql -u root -p -e 'CREATE DATABASE playground';
+node0$ CREATE TABLE playground.equipment ( id INT NOT NULL AUTO_INCREMENT, type VARCHAR(50), quant INT, color VARCHAR(25), PRIMARY KEY(id));
+noode0$ INSERT INTO playground.equipment (type, quant, color) VALUES ("slide", 2, "blue");
+
+## Read and Write on the Second Node
+node2$ mysql -u root -p -e 'SELECT * FROM playground.equipment;'
+
+node2$ mysql -u root -p -e 'INSERT INTO playground.equipment (type, quant, color) VALUES ("swing", 10, "yellow");'
+
+
+Read and Write on the Third Node
+node3$ mysql -u root -p -e 'SELECT * FROM playground.equipment;'
+mysql -u root -p -e 'INSERT INTO playground.equipment (type, quant, color) VALUES ("seesaw", 3, "green");'
+
+# Read on the First Node:
+mysql -u root -p -e 'SELECT * FROM playground.equipment;'
