@@ -114,3 +114,7 @@ mysql -u root -p -e 'INSERT INTO playground.equipment (type, quant, color) VALUE
 
 # Read on the First Node:
 mysql -u root -p -e 'SELECT * FROM playground.equipment;'
+
+
+
+mysql> SHOW GLOBAL STATUS WHERE Variable_name IN ('wsrep_ready', 'wsrep_cluster_size', 'wsrep_cluster_status', 'wsrep_connected');
